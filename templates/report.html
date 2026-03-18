@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibe Check Report — {{ audit.repo_name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+    tailwind.config = {
+        theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] } } }
+    }
+    </script>
+    <style>
+        body { background: #06080f; }
+        .grade-circle { width: 120px; height: 120px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .grade-A { background: radial-gradient(circle, rgba(34,197,94,0.2) 0%, transparent 70%); border: 2px solid #22c55e; }
+        .grade-B { background: radial-gradient(circle, rgba(59,130,246,0.2) 0%, transparent 70%); border: 2px solid #3b82f6; }
+        .grade-C { background: radial-gradient(circle, rgba(245,158,11,0.2) 0%, transparent 70%); border: 2px solid #f59e0b; }
+        .grade-D { background: radial-gradient(circle, rgba(249,115,22,0.2) 0%, transparent 70%); border: 2px solid #f97316; }
+        .grade-F { background: radial-gradient(circle, rgba(239,68,68,0.2) 0%, transparent 70%); border: 2px solid #ef4444; }
+        .bar-fill { transition: width 1s ease-out; }
+        .section-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); }
+        .severity-critical { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+        .severity-high { color: #f97316; background: rgba(249,115,22,0.1); border-color: rgba(249,115,22,0.3); }
+        .severity-medium { color: #f59e0b; background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); }
+        .severity-low { color: #3b82f6; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); }
+        /* Free tier blur overlay */
+        .blurred-content { filter: blur(5px); pointer-events: none; user-select: none; }
+        .blur-overlay {
+            position: relative;
+        }
+        .blur-overlay::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, transparent 0%, rgba(6,8,15,0.7) 40%, rgba(6,8,15,0.95) 100%);
+            pointer-events: none;
+        }
+        .unlock-cta {
+            position: relative;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-gray-100 font-sans">
+    <div class="max-w-4xl mx-auto px-6 py-12">
+
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-2">
+            <div>
+                <a href="/" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">&larr; New Audit</a>
+                <h1 class="text-3xl font-bold text-white mt-2">Vibe Check Report</h1>
+            </div>
+            <div class="text-right">
+                {% if tier == 'free' %}
+                <span class="px-2.5 py-1 rounded-full bg-gray-500/10 border border-gray-500/20 text-gray-400 text-xs font-medium">FREE PREVIEW</span>
+                {% else %}
+                <span class="px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium">FULL REPORT</span>
+                {% endif %}
+                <p class="text-xs text-gray-600 mt-2">ID: <span class="font-mono text-gray-500">{{ audit_id }}</span></p>
+            </div>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- ALWAYS VISIBLE (both tiers)                  -->
+        <!-- ============================================ -->
+
+        <!-- Repo + Score Hero -->
+        <div class="flex flex-col sm:flex-row items-center gap-8 p-8 rounded-2xl section-card mb-8 mt-6">
+            <div class="grade-circle grade-{{ audit.grade }}">
+                <span class="text-4xl font-extrabold">{{ audit.grade }}</span>
+                <span class="text-sm text-gray-400 font-mono">{{ audit.score }}/100</span>
+            </div>
+            <div class="flex-1 text-center sm:text-left">
+                <h2 class="text-2xl font-bold text-white font-mono">{{ audit.repo_name }}</h2>
+                <p class="text-gray-500 text-sm mt-1 font-mono">{{ audit.repo_url }}</p>
+                <div class="flex flex-wrap gap-3 mt-4 justify-center sm:justify-start">
+                    <span class="px-2.5 py-1 rounded-md bg-indigo-500/10 text-indigo-300 text-xs font-medium">{{ audit.primary_language }}</span>
+                    <span class="px-2.5 py-1 rounded-md bg-white/5 text-gray-400 text-xs">{{ audit.total_files }} files</span>
+                    <span class="px-2.5 py-1 rounded-md bg-white/5 text-gray-400 text-xs">{{ "{:,}".format(audit.total_loc) }} LOC</span>
+                    {% if audit.languages %}
+                    {% for lang, count in audit.languages.items() %}{% if not loop.first %}
+                    <span class="px-2.5 py-1 rounded-md bg-white/5 text-gray-500 text-xs">{{ lang }} ({{ count }})</span>
+                    {% endif %}{% endfor %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Score Breakdown (always visible) -->
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-5">Score Breakdown</h3>
+            {% set sections = [("Security", "security", 30), ("Dependencies", "dependencies", 15), ("Code Quality", "code_quality", 25), ("Structure", "structure", 15), ("Architecture", "architecture", 15)] %}
+            {% for label, key, max_score in sections %}
+            {% set val = audit.section_scores.get(key, 0) %}
+            {% set pct = (val / max_score * 100) | int %}
+            <div class="mb-4 last:mb-0">
+                <div class="flex justify-between text-sm mb-1.5">
+                    <span class="text-gray-300">{{ label }}</span>
+                    <span class="font-mono text-gray-500">{{ val }}/{{ max_score }}</span>
+                </div>
+                <div class="h-2.5 rounded-full bg-white/5 overflow-hidden">
+                    <div class="h-full rounded-full bar-fill {% if pct >= 80 %}bg-emerald-500{% elif pct >= 60 %}bg-blue-500{% elif pct >= 40 %}bg-amber-500{% else %}bg-red-500{% endif %}" style="width: {{ pct }}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Code Quality Checklist (always visible — it's the hook) -->
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-1">Code Quality</h3>
+            <p class="text-sm text-gray-600 mb-5">Engineering best practices checklist</p>
+            <div class="space-y-3">
+                {% set checks = [(audit.has_tests, "Tests", "test_file_count"), (audit.has_ci, "CI/CD pipeline", none), (audit.has_linting, "Linting configuration", none), (audit.has_readme, "README documentation", none), (audit.has_dockerfile, "Docker configuration", none), (audit.has_license, "License file", none)] %}
+                {% for passed, label, extra_key in checks %}
+                <div class="flex items-center gap-3 text-sm">
+                    {% if passed %}
+                    <span class="text-emerald-400 text-base">&#10004;</span>
+                    <span class="text-gray-300">{{ label }}{% if extra_key and audit[extra_key] %} <span class="text-gray-600 ml-1">({{ audit[extra_key] }} files)</span>{% endif %}</span>
+                    {% else %}
+                    <span class="text-red-400 text-base">&#10060;</span>
+                    <span class="text-gray-500">{{ label }}</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% if audit.largest_files %}
+            <div class="mt-6 pt-5 border-t border-white/5">
+                <h4 class="text-sm font-medium text-gray-400 mb-3">Largest Files</h4>
+                <div class="space-y-1.5">
+                    {% for file, loc in audit.largest_files[:5] %}
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-gray-400 truncate mr-4">{{ file }}</span>
+                        <span class="{% if loc > 500 %}text-amber-400{% elif loc > 300 %}text-gray-400{% else %}text-gray-600{% endif %} whitespace-nowrap">{{ loc }} LOC</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Dependencies (always visible) -->
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-1">Dependencies</h3>
+            <p class="text-sm text-gray-600 mb-5">Package management and dependency health</p>
+            {% if audit.dep_files_found %}
+            <div class="flex flex-wrap gap-2 mb-4">
+                {% for f in audit.dep_files_found %}
+                <span class="px-2.5 py-1 rounded-md bg-white/5 text-gray-300 text-xs font-mono">{{ f }}</span>
+                {% endfor %}
+            </div>
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div class="p-3 rounded-lg bg-white/[0.03]">
+                    <div class="text-2xl font-bold text-white">{{ audit.dependency_count }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Total</div>
+                </div>
+                <div class="p-3 rounded-lg bg-white/[0.03]">
+                    <div class="text-2xl font-bold text-emerald-400">{{ audit.pinned_deps }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Pinned</div>
+                </div>
+                <div class="p-3 rounded-lg bg-white/[0.03]">
+                    <div class="text-2xl font-bold {% if audit.unpinned_deps > audit.pinned_deps %}text-amber-400{% else %}text-gray-400{% endif %}">{{ audit.unpinned_deps }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Unpinned</div>
+                </div>
+            </div>
+            {% else %}
+            <p class="text-sm text-amber-400">&#9888; No dependency files found</p>
+            {% endif %}
+        </div>
+
+        <!-- Security Findings — TEASER on free, FULL on paid -->
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-1">Security Scan</h3>
+            <p class="text-sm text-gray-600 mb-5">Secrets, credentials, and configuration issues</p>
+
+            <!-- Basic checks (always visible) -->
+            <div class="space-y-3 mb-5">
+                <div class="flex items-center gap-3 text-sm">
+                    {% if audit.env_committed %}<span class="text-red-400">&#10060;</span><span class="text-red-300">.env file committed to repository</span>
+                    {% else %}<span class="text-emerald-400">&#10004;</span><span class="text-gray-400">No .env file in repository</span>{% endif %}
+                </div>
+                <div class="flex items-center gap-3 text-sm">
+                    {% if audit.gitignore_exists %}<span class="text-emerald-400">&#10004;</span><span class="text-gray-400">.gitignore present</span>
+                    {% else %}<span class="text-red-400">&#10060;</span><span class="text-red-300">No .gitignore file</span>{% endif %}
+                </div>
+                {% for issue in audit.gitignore_issues %}
+                <div class="flex items-center gap-3 text-sm">
+                    <span class="text-amber-400">&#9888;</span><span class="text-amber-300">{{ issue }}</span>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% if audit.secrets_found %}
+            <h4 class="text-sm font-medium text-red-400 mb-3">&#128680; {{ audit.secrets_found | length }} Secret{{ 's' if audit.secrets_found | length > 1 }} Found</h4>
+
+            {% if tier == 'free' %}
+            <!-- FREE: show count + first finding, blur the rest -->
+            {% if audit.secrets_found | length > 0 %}
+            <div class="space-y-2 mb-3">
+                {% set s = audit.secrets_found[0] %}
+                <div class="p-3 rounded-lg bg-red-500/5 border border-red-500/20 text-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium severity-critical border">{{ s.pattern_type }}</span>
+                        <span class="font-mono text-gray-400 text-xs">{{ s.file }}:{{ s.line_num }}</span>
+                    </div>
+                    <code class="text-xs text-gray-500 font-mono">{{ s.snippet }}</code>
+                </div>
+            </div>
+            {% endif %}
+            {% if audit.secrets_found | length > 1 %}
+            <div class="blur-overlay rounded-lg overflow-hidden">
+                <div class="blurred-content space-y-2">
+                    {% for s in audit.secrets_found[1:3] %}
+                    <div class="p-3 rounded-lg bg-red-500/5 border border-red-500/20 text-sm">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="px-2 py-0.5 rounded text-xs font-medium severity-critical border">{{ s.pattern_type }}</span>
+                            <span class="font-mono text-gray-400 text-xs">{{ s.file }}:{{ s.line_num }}</span>
+                        </div>
+                        <code class="text-xs text-gray-500 font-mono">{{ s.snippet }}</code>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <p class="text-xs text-indigo-400 mt-3 unlock-cta">&#128274; {{ audit.secrets_found | length - 1 }} more finding{{ 's' if audit.secrets_found | length > 2 }} — unlock the full report to see details</p>
+            {% endif %}
+
+            {% else %}
+            <!-- PAID: show all -->
+            <div class="space-y-2">
+                {% for s in audit.secrets_found %}
+                <div class="p-3 rounded-lg bg-red-500/5 border border-red-500/20 text-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium severity-critical border">{{ s.pattern_type }}</span>
+                        <span class="font-mono text-gray-400 text-xs">{{ s.file }}:{{ s.line_num }}</span>
+                    </div>
+                    <code class="text-xs text-gray-500 font-mono">{{ s.snippet }}</code>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% else %}
+            <p class="text-sm text-emerald-400">&#10004; No hardcoded secrets detected</p>
+            {% endif %}
+        </div>
+
+        <!-- File Tree (always visible) -->
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-4">Project Structure</h3>
+            <pre class="text-xs font-mono text-gray-500 overflow-x-auto leading-relaxed">{{ audit.file_tree }}</pre>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- LLM REVIEW — tiered visibility               -->
+        <!-- ============================================ -->
+
+        {% if llm and not llm.get('error') %}
+        <div class="p-6 rounded-2xl section-card mb-8 border-l-4 border-purple-500/50">
+            <div class="flex items-center gap-2 mb-1">
+                <h3 class="text-lg font-semibold text-white">AI Architecture Review</h3>
+                <span class="px-2 py-0.5 rounded text-xs bg-purple-500/10 text-purple-300">powered by Claude</span>
+            </div>
+            <p class="text-sm text-gray-600 mb-6">Senior-level code review generated by reading your actual source files</p>
+
+            <!-- Overall Assessment (always visible — the hook) -->
+            {% if llm.overall_assessment %}
+            <div class="p-4 rounded-xl bg-white/[0.03] mb-6">
+                <p class="text-sm text-gray-300 leading-relaxed whitespace-pre-line">{{ llm.overall_assessment }}</p>
+            </div>
+            {% endif %}
+
+            {% if tier == 'free' %}
+            <!-- FREE: Show assessment + tease the details behind blur -->
+            <div class="blur-overlay rounded-xl overflow-hidden mb-4">
+                <div class="blurred-content space-y-5 p-2">
+                    {% if llm.architecture_summary %}
+                    <div>
+                        <h4 class="text-sm font-semibold text-gray-300 mb-2">Architecture</h4>
+                        <p class="text-sm text-gray-400">{{ llm.architecture_summary }}</p>
+                    </div>
+                    {% endif %}
+                    {% if llm.positive_notes %}
+                    <div>
+                        <h4 class="text-sm font-semibold text-emerald-400 mb-2">What's Done Well</h4>
+                        {% for note in llm.positive_notes[:3] %}
+                        <p class="text-sm text-gray-400">{{ note }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if llm.architecture_concerns %}
+                    <div>
+                        <h4 class="text-sm font-semibold text-amber-400 mb-2">Architecture Concerns</h4>
+                        {% for c in llm.architecture_concerns[:3] %}
+                        <p class="text-sm text-gray-400">{{ c }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if llm.security_concerns %}
+                    <div>
+                        <h4 class="text-sm font-semibold text-red-400 mb-2">Security Concerns</h4>
+                        {% for item in llm.security_concerns[:2] %}
+                        <p class="text-sm text-gray-400">[{{ item.severity }}] {{ item.issue }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if llm.code_smells %}
+                    <div>
+                        <h4 class="text-sm font-semibold text-amber-400 mb-2">Code Smells</h4>
+                        {% for smell in llm.code_smells[:3] %}
+                        <p class="text-sm text-gray-400">[{{ smell.severity }}] {{ smell.file }}: {{ smell.issue }}</p>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <p class="text-sm text-gray-500 unlock-cta">
+                &#128274; {{ issue_count }} detailed findings hidden —
+                <span class="text-indigo-400">unlock the full report</span> to see architecture concerns, security issues, code smells, and fix snippets.
+            </p>
+
+            {% else %}
+            <!-- PAID: Full details -->
+
+            {% if llm.architecture_summary %}
+            <h4 class="text-sm font-semibold text-gray-300 mb-2">Architecture</h4>
+            <p class="text-sm text-gray-400 mb-5">{{ llm.architecture_summary }}</p>
+            {% endif %}
+
+            {% if llm.positive_notes %}
+            <h4 class="text-sm font-semibold text-emerald-400 mb-2">What's Done Well</h4>
+            <ul class="space-y-1.5 mb-6">
+                {% for note in llm.positive_notes %}
+                <li class="flex items-start gap-2 text-sm text-gray-400">
+                    <span class="text-emerald-400 mt-0.5 shrink-0">&#10004;</span>{{ note }}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if llm.architecture_concerns %}
+            <h4 class="text-sm font-semibold text-amber-400 mb-2">Architecture Concerns</h4>
+            <ul class="space-y-1.5 mb-6">
+                {% for concern in llm.architecture_concerns %}
+                <li class="flex items-start gap-2 text-sm text-gray-400">
+                    <span class="text-amber-400 mt-0.5 shrink-0">&#9888;</span>{{ concern }}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if llm.security_concerns %}
+            <h4 class="text-sm font-semibold text-red-400 mb-3">Security Concerns</h4>
+            <div class="space-y-2 mb-6">
+                {% for item in llm.security_concerns %}
+                <div class="p-3 rounded-lg bg-red-500/5 border border-red-500/10">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium severity-{{ item.severity }} border">{{ item.severity | upper }}</span>
+                        <span class="text-sm text-gray-300">{{ item.issue }}</span>
+                    </div>
+                    <p class="text-xs text-gray-500 ml-1">Fix: {{ item.fix }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if llm.code_smells %}
+            <h4 class="text-sm font-semibold text-amber-400 mb-3">Code Smells</h4>
+            <div class="space-y-2 mb-6">
+                {% for smell in llm.code_smells %}
+                <div class="flex items-start gap-3 text-sm p-2 rounded-lg bg-white/[0.02]">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium severity-{{ smell.severity }} border shrink-0 mt-0.5">{{ smell.severity | upper }}</span>
+                    <div>
+                        <span class="font-mono text-gray-500 text-xs">{{ smell.file }}</span>
+                        <p class="text-gray-400 mt-0.5">{{ smell.issue }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% endif %}{# end tier check for LLM details #}
+        </div>
+
+        <!-- ============================================ -->
+        <!-- PRIORITY FIXES — tiered                      -->
+        <!-- ============================================ -->
+
+        {% if llm.priority_fixes %}
+        <div class="p-6 rounded-2xl section-card mb-8 border-l-4 border-indigo-500/50">
+            <h3 class="text-lg font-semibold text-white mb-1">If You Hired a Dev</h3>
+            <p class="text-sm text-gray-600 mb-5">Here's what they'd fix first, in priority order</p>
+
+            {% if tier == 'free' %}
+            <!-- FREE: show titles + severity only, blur descriptions -->
+            <div class="space-y-3">
+                {% for fix in llm.priority_fixes %}
+                <div class="p-4 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">{{ loop.index }}</span>
+                        <span class="px-2 py-0.5 rounded text-xs font-medium severity-{{ fix.severity }} border">{{ fix.severity | upper }}</span>
+                        <span class="font-semibold text-white text-sm">{{ fix.title }}</span>
+                        <span class="ml-auto text-xs text-gray-600 font-mono shrink-0">~{{ fix.effort }}</span>
+                    </div>
+                    <p class="text-sm text-gray-600 ml-9 blurred-content">{{ fix.description }}</p>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% else %}
+            <!-- PAID: full details + inline fix snippets -->
+            <div class="space-y-3">
+                {% for fix in llm.priority_fixes %}
+                <div class="p-4 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">{{ loop.index }}</span>
+                        <span class="px-2 py-0.5 rounded text-xs font-medium severity-{{ fix.severity }} border">{{ fix.severity | upper }}</span>
+                        <span class="font-semibold text-white text-sm">{{ fix.title }}</span>
+                        {% if fix.file %}<span class="font-mono text-gray-600 text-xs">{{ fix.file }}</span>{% endif %}
+                        <span class="ml-auto text-xs text-gray-600 font-mono shrink-0">~{{ fix.effort }}</span>
+                    </div>
+                    <p class="text-sm text-gray-400 ml-9">{{ fix.description }}</p>
+                    {% if fix.fix_snippet %}
+                    <div class="ml-9 mt-3 p-3 rounded-lg bg-black/30 border border-white/5 overflow-x-auto">
+                        <pre class="text-xs font-mono text-gray-400 leading-relaxed whitespace-pre">{{ fix.fix_snippet }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% elif llm and llm.get('error') %}
+        <div class="p-6 rounded-2xl section-card mb-8">
+            <h3 class="text-lg font-semibold text-white mb-2">AI Architecture Review</h3>
+            <p class="text-sm text-amber-400">&#9888; {{ llm.get('overall_assessment', 'LLM review unavailable.') }}</p>
+        </div>
+        {% endif %}
+
+        <!-- VIBECHECK.md Download (paid report only) -->
+        {% if tier == 'report' %}
+        <div class="p-6 rounded-2xl section-card mb-8 border border-violet-500/20" style="background: linear-gradient(135deg, rgba(139,92,246,0.04) 0%, rgba(99,102,241,0.04) 100%);">
+            <div class="flex items-start gap-4">
+                <div class="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-base font-semibold text-white mb-1">Download VIBECHECK.md</h3>
+                    <p class="text-sm text-gray-400 mb-4">
+                        Drop this file into your repo and your AI coding assistant (Cursor, Windsurf, Claude Code, Copilot) will
+                        instantly know every issue and how to fix it. It's a ready-made prompt for your AI to work through the entire fix list.
+                    </p>
+                    <a href="/vibecheck/{{ audit_id }}?key=dev"
+                       class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Download VIBECHECK.md
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- ============================================ -->
+        <!-- UPSELL CTAs                                  -->
+        <!-- ============================================ -->
+
+        {% if tier == 'free' %}
+        <!-- UNLOCK FULL REPORT upsell -->
+        <div class="p-8 rounded-2xl mb-8 border border-indigo-500/30 relative overflow-hidden" style="background: linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(139,92,246,0.05) 100%);">
+            <div class="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+            <div class="relative">
+                <h3 class="text-xl font-bold text-white mb-2">Unlock the Full Report</h3>
+                <p class="text-sm text-gray-400 mb-5 max-w-xl">
+                    Your free preview shows the grade and basics. The full report includes
+                    <span class="text-indigo-300 font-medium">{{ issue_count }} detailed findings</span>
+                    with security concerns, architecture review, code smells, and inline fix snippets.
+                </p>
+                <div class="grid sm:grid-cols-2 gap-3 mb-6 text-sm text-gray-400">
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">&#10004;</span>
+                        All security findings with file:line
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">&#10004;</span>
+                        AI architecture deep-dive
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">&#10004;</span>
+                        Code smell analysis
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">&#10004;</span>
+                        Inline fix snippets per issue
+                    </div>
+                </div>
+
+                {% if unlock_error %}
+                <div class="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">{{ unlock_error }}</div>
+                {% endif %}
+
+                <form method="POST" action="/unlock/{{ audit_id }}" class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" name="license_key" placeholder="Full Report license key" class="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm">
+                    <button type="submit" class="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all whitespace-nowrap">
+                        Unlock Full Report
+                    </button>
+                </form>
+                <p class="text-xs text-gray-600 mt-3">Don't have a key? <a href="#" class="text-indigo-400 hover:text-indigo-300 underline">Get one on Gumroad — $29</a></p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if tier == 'report' and issue_count > 0 %}
+        <!-- FIX PACK upsell (only on paid report) -->
+        <div class="p-8 rounded-2xl mb-8 border border-emerald-500/30 relative overflow-hidden" style="background: linear-gradient(135deg, rgba(16,185,129,0.05) 0%, rgba(99,102,241,0.05) 100%);">
+            <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+            <div class="relative">
+                <h3 class="text-xl font-bold text-white mb-2">Don't just know what's broken — fix it.</h3>
+                <p class="text-sm text-gray-400 mb-6 max-w-xl">
+                    Get AI-generated <span class="text-emerald-400 font-semibold">corrected source files</span> with line-by-line diffs for every issue found. Ready to copy, paste, and ship.
+                    {% if not fix_eligible %}
+                    <br><span class="text-amber-400 text-xs mt-1 block">Note: This repo exceeds {{ "{:,}".format(50000) }} LOC — Fix Pack is available for smaller codebases.</span>
+                    {% endif %}
+                </p>
+                <div class="grid sm:grid-cols-3 gap-3 mb-6">
+                    <div class="flex items-center gap-2.5 text-sm text-gray-400">
+                        <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">&#10004;</span>
+                        Corrected source files
+                    </div>
+                    <div class="flex items-center gap-2.5 text-sm text-gray-400">
+                        <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">&#10004;</span>
+                        Line-by-line diffs
+                    </div>
+                    <div class="flex items-center gap-2.5 text-sm text-gray-400">
+                        <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">&#10004;</span>
+                        Downloadable zip
+                    </div>
+                </div>
+                <form method="POST" action="/fixes/{{ audit_id }}" class="flex flex-col sm:flex-row gap-3">
+                    <input type="text" name="license_key" placeholder="Fix Pack license key" class="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono text-sm">
+                    <button type="submit" class="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-all whitespace-nowrap" {% if not fix_eligible %}disabled title="Repo too large"{% endif %}>
+                        Get Fixed Code
+                    </button>
+                </form>
+                <p class="text-xs text-gray-600 mt-3">Don't have a key? <a href="#" class="text-emerald-400 hover:text-emerald-300 underline">Get a Fix Pack on Gumroad — $49</a></p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Bottom CTA -->
+        <div class="text-center p-8 rounded-2xl section-card">
+            <h3 class="text-xl font-bold text-white mb-2">Want to audit another repo?</h3>
+            <p class="text-sm text-gray-500 mb-5">Free preview for every repo. Unlimited.</p>
+            <a href="/" class="inline-block px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-colors">Run Another Vibe Check</a>
+        </div>
+
+        <div class="text-center text-xs text-gray-700 border-t border-white/5 pt-8 mt-8">
+            <p>Vibe Audit by Green Wick AI &middot; Your code was analyzed in a temporary sandbox and has been deleted.</p>
+        </div>
+    </div>
+</body>
+</html>

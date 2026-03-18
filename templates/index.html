@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibe Audit — AI Code Review for Vibe-Coded Projects</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                fontFamily: {
+                    sans: ['Inter', 'system-ui', 'sans-serif'],
+                    mono: ['JetBrains Mono', 'monospace'],
+                },
+            }
+        }
+    }
+    </script>
+    <style>
+        body { background: #06080f; }
+        .gradient-text {
+            background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .glow-border {
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            box-shadow: 0 0 30px rgba(99, 102, 241, 0.1);
+        }
+        .pulse-glow {
+            animation: pulseGlow 2s ease-in-out infinite;
+        }
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.2); }
+            50% { box-shadow: 0 0 40px rgba(99, 102, 241, 0.4); }
+        }
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 15, 0.9);
+            z-index: 50;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            width: 48px; height: 48px;
+            border: 3px solid rgba(99, 102, 241, 0.2);
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="min-h-screen text-gray-100 font-sans">
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay items-center justify-center flex-col gap-6">
+        <div class="spinner"></div>
+        <div class="text-center">
+            <p class="text-xl font-semibold text-indigo-300">Running your Vibe Check...</p>
+            <p class="text-sm text-gray-500 mt-2" id="loading-status">Cloning repository...</p>
+        </div>
+    </div>
+
+    <div class="max-w-3xl mx-auto px-6 py-16">
+        <!-- Header -->
+        <div class="text-center mb-16">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium mb-6">
+                <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                BETA
+            </div>
+            <h1 class="text-5xl sm:text-6xl font-extrabold tracking-tight mb-4">
+                <span class="text-white">Vibe Coded,</span><br>
+                <span class="gradient-text">Now What?</span>
+            </h1>
+            <p class="text-lg text-gray-400 max-w-xl mx-auto leading-relaxed">
+                Get a professional-grade code audit of your AI-generated project in 60 seconds.
+                Security holes, dependency risks, architecture review, and a prioritized fix list.
+            </p>
+        </div>
+
+        <!-- Error Message -->
+        {% if error %}
+        <div class="mb-8 p-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <!-- Form -->
+        <form method="POST" action="/audit" id="audit-form" class="space-y-4 mb-16">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">GitHub Repository</label>
+                <input
+                    type="text"
+                    name="repo_url"
+                    placeholder="https://github.com/user/repo  or  user/repo"
+                    value="{{ repo_url or '' }}"
+                    required
+                    class="w-full px-4 py-3.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm transition-colors"
+                >
+            </div>
+
+            <button
+                type="submit"
+                class="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-base transition-all duration-200 pulse-glow mt-2"
+            >
+                Run Free Vibe Check
+            </button>
+
+            <div class="text-center">
+                <button type="button" onclick="document.getElementById('license-section').classList.toggle('hidden')" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">
+                    Have a license key? Click here
+                </button>
+                <div id="license-section" class="hidden mt-3">
+                    <input
+                        type="text"
+                        name="license_key"
+                        placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+                        class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono text-sm transition-colors"
+                    >
+                    <p class="text-xs text-gray-600 mt-2">Enter your Full Report license key to unlock all details instantly.</p>
+                </div>
+            </div>
+        </form>
+
+        <!-- What You Get -->
+        <div class="grid sm:grid-cols-2 gap-4 mb-16">
+            <div class="p-5 rounded-xl glow-border bg-white/[0.02]">
+                <div class="text-red-400 text-lg mb-2">&#128274;</div>
+                <h3 class="font-semibold text-white mb-1">Security Scan</h3>
+                <p class="text-sm text-gray-500">Leaked API keys, exposed secrets, missing .gitignore rules, hardcoded credentials.</p>
+            </div>
+            <div class="p-5 rounded-xl glow-border bg-white/[0.02]">
+                <div class="text-amber-400 text-lg mb-2">&#128230;</div>
+                <h3 class="font-semibold text-white mb-1">Dependency Audit</h3>
+                <p class="text-sm text-gray-500">Unpinned versions, bloated dep trees, missing lock files.</p>
+            </div>
+            <div class="p-5 rounded-xl glow-border bg-white/[0.02]">
+                <div class="text-blue-400 text-lg mb-2">&#128200;</div>
+                <h3 class="font-semibold text-white mb-1">Code Quality</h3>
+                <p class="text-sm text-gray-500">Tests, CI/CD, linting, file structure, README — the basics that matter.</p>
+            </div>
+            <div class="p-5 rounded-xl glow-border bg-white/[0.02]">
+                <div class="text-purple-400 text-lg mb-2">&#129504;</div>
+                <h3 class="font-semibold text-white mb-1">AI Architecture Review</h3>
+                <p class="text-sm text-gray-500">An LLM reads your actual code and gives you a senior dev's honest opinion.</p>
+            </div>
+        </div>
+
+        <!-- How it works -->
+        <div class="text-center mb-16">
+            <h2 class="text-2xl font-bold text-white mb-8">How it works</h2>
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-6 text-sm text-gray-400">
+                <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">1</span>
+                    Paste your repo URL
+                </div>
+                <div class="hidden sm:block text-gray-700">&#8594;</div>
+                <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">2</span>
+                    We clone &amp; analyze
+                </div>
+                <div class="hidden sm:block text-gray-700">&#8594;</div>
+                <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center font-bold text-xs">3</span>
+                    Get your Vibe Check report
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center text-xs text-gray-700 border-t border-white/5 pt-8">
+            <p>Vibe Audit by Green Wick AI &middot; Your code is cloned temporarily, analyzed, then deleted. We never store your source code.</p>
+        </div>
+    </div>
+
+    <script>
+    document.getElementById('audit-form').addEventListener('submit', function() {
+        const overlay = document.getElementById('loading');
+        overlay.classList.add('active');
+        const status = document.getElementById('loading-status');
+        const steps = [
+            'Cloning repository...',
+            'Scanning file structure...',
+            'Checking for secrets...',
+            'Analyzing dependencies...',
+            'Running AI architecture review...',
+            'Generating your report...',
+        ];
+        let i = 0;
+        setInterval(function() {
+            i++;
+            if (i < steps.length) status.textContent = steps[i];
+        }, 5000);
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix Pack — {{ repo_name or 'Vibe Audit' }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                fontFamily: {
+                    sans: ['Inter', 'system-ui', 'sans-serif'],
+                    mono: ['JetBrains Mono', 'monospace'],
+                },
+            }
+        }
+    }
+    </script>
+    <style>
+        body { background: #06080f; }
+        .section-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .severity-critical { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+        .severity-high { color: #f97316; background: rgba(249,115,22,0.1); border-color: rgba(249,115,22,0.3); }
+        .severity-medium { color: #f59e0b; background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); }
+        .severity-low { color: #3b82f6; background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); }
+        .diff-add { color: #4ade80; background: rgba(74,222,128,0.08); }
+        .diff-del { color: #f87171; background: rgba(248,113,113,0.08); }
+        .diff-hunk { color: #818cf8; }
+        .diff-file { color: #fbbf24; }
+        pre.diff-block {
+            counter-reset: line;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .copy-btn {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .fix-card:hover .copy-btn {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-gray-100 font-sans">
+    <div class="max-w-5xl mx-auto px-6 py-12">
+
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-8">
+            <div>
+                <a href="/report/{{ audit_id }}" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">&larr; Back to Report</a>
+                <h1 class="text-3xl font-bold text-white mt-2">Fix Pack</h1>
+                <p class="text-gray-500 text-sm mt-1">
+                    {% if repo_name %}
+                    <span class="font-mono text-gray-400">{{ repo_name }}</span> &middot;
+                    {% endif %}
+                    {% if fix_count %}{{ fix_count }} file{{ 's' if fix_count > 1 }} corrected{% endif %}
+                </p>
+            </div>
+            {% if fixes %}
+            <a href="/download/{{ audit_id }}?key=dev" class="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Download All (.zip)
+            </a>
+            {% endif %}
+        </div>
+
+        {% if error %}
+        <div class="p-5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm mb-8">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        {% if fixes %}
+        <!-- Fixes Summary -->
+        <div class="p-5 rounded-xl section-card mb-8">
+            <div class="flex flex-wrap gap-3">
+                {% for fix in fixes %}
+                <a href="#fix-{{ loop.index }}" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] transition-colors text-sm">
+                    <span class="px-1.5 py-0.5 rounded text-xs font-medium severity-{{ fix.severity }} border">{{ fix.severity | upper }}</span>
+                    <span class="font-mono text-gray-400 text-xs">{{ fix.file }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Individual Fixes -->
+        {% for fix in fixes %}
+        <div id="fix-{{ loop.index }}" class="rounded-2xl section-card mb-6 overflow-hidden fix-card">
+            <!-- Fix Header -->
+            <div class="p-5 border-b border-white/5 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="w-7 h-7 rounded-full bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">{{ loop.index }}</span>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-mono text-white text-sm font-medium">{{ fix.file }}</span>
+                            <span class="px-2 py-0.5 rounded text-xs font-medium severity-{{ fix.severity }} border">{{ fix.severity | upper }}</span>
+                        </div>
+                        <p class="text-sm text-gray-400 mt-0.5">{{ fix.description }}</p>
+                    </div>
+                </div>
+                <button onclick="copyDiff({{ loop.index }})" class="copy-btn px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs transition-colors" title="Copy diff">
+                    Copy
+                </button>
+            </div>
+
+            <!-- Diff View -->
+            {% if fix.diff %}
+            <div class="overflow-x-auto">
+                <pre class="diff-block p-5 font-mono" id="diff-{{ loop.index }}">{% for line in fix.diff.split('\n') %}{% if line.startswith('---') or line.startswith('+++') %}<span class="diff-file">{{ line }}</span>
+{% elif line.startswith('@@') %}<span class="diff-hunk">{{ line }}</span>
+{% elif line.startswith('+') %}<span class="diff-add">{{ line }}</span>
+{% elif line.startswith('-') %}<span class="diff-del">{{ line }}</span>
+{% else %}<span class="text-gray-600">{{ line }}</span>
+{% endif %}{% endfor %}</pre>
+            </div>
+            {% else %}
+            <div class="p-5 text-sm text-gray-500">No diff available — see corrected file in the download.</div>
+            {% endif %}
+
+            <!-- Corrected Code (collapsed) -->
+            {% if fix.corrected_code %}
+            <details class="border-t border-white/5">
+                <summary class="p-4 text-sm text-gray-500 hover:text-gray-300 cursor-pointer transition-colors">
+                    View full corrected file ({{ fix.corrected_lines or '?' }} lines)
+                </summary>
+                <div class="overflow-x-auto border-t border-white/5">
+                    <pre class="p-5 font-mono text-xs text-gray-400 leading-relaxed">{{ fix.corrected_code }}</pre>
+                </div>
+            </details>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        {% elif not error %}
+        <div class="text-center p-12 rounded-2xl section-card">
+            <p class="text-gray-400">No fixes were generated. Your code might already be clean!</p>
+        </div>
+        {% endif %}
+
+        <!-- Back to report -->
+        <div class="text-center mt-8">
+            <a href="/report/{{ audit_id }}" class="text-sm text-gray-600 hover:text-gray-400 transition-colors">&larr; Back to Vibe Check Report</a>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center text-xs text-gray-700 border-t border-white/5 pt-8 mt-8">
+            <p>Vibe Audit Fix Pack by Green Wick AI &middot; Review all changes before applying to your codebase.</p>
+        </div>
+    </div>
+
+    <script>
+    function copyDiff(index) {
+        const el = document.getElementById('diff-' + index);
+        if (el) {
+            navigator.clipboard.writeText(el.textContent).then(() => {
+                const btn = el.closest('.fix-card').querySelector('.copy-btn');
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            });
+        }
+    }
+    </script>
+</body>
+</html>

@@ -31,6 +31,7 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(audits)").fetchall()]
         if "source_files" not in cols:
             conn.execute("ALTER TABLE audits ADD COLUMN source_files TEXT")
+            conn.commit()
 
 
 def save_audit(license_key, email, repo_url, audit_result):

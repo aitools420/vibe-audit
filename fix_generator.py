@@ -2,9 +2,13 @@ import os
 import json
 import difflib
 import logging
+import time
 from openai import OpenAI
 
 log = logging.getLogger(__name__)
+
+# Import shared model config from llm_review
+from llm_review import FREE_MODELS, REASONING_MODELS
 
 FIX_PROMPT = """You are a senior software engineer. You've just completed a code audit and found issues.
 Now generate the CORRECTED versions of the files listed below.
@@ -48,8 +52,10 @@ def generate_fixes(source_files: dict, llm_review: dict, audit_data: dict) -> di
     if not api_key:
         return {"error": "No API key configured"}
 
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    model = os.getenv("LLM_MODEL", "qwen/qwen3-coder:free")
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, timeout=120)
+
+    primary_model = os.getenv("LLM_MODEL", FREE_MODELS[0])
+    models_to_try = [primary_model] + [m for m in FREE_MODELS if m != primary_model]
 
     # Build issues summary from the LLM review
     issues = []
@@ -105,59 +111,80 @@ def generate_fixes(source_files: dict, llm_review: dict, audit_data: dict) -> di
         file_contents=file_contents,
     )
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=16000,
-        )
+    last_error = None
+    for model in models_to_try:
+        try:
+            log.info("Fix generator trying model: %s", model)
+            tokens = 16000 if model in REASONING_MODELS else 8000
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=tokens,
+            )
 
-        text = response.choices[0].message.content.strip()
+            raw_content = response.choices[0].message.content
+            if not raw_content:
+                log.warning("Fix model %s returned empty content, trying next...", model)
+                last_error = f"Empty response from {model}"
+                continue
+            text = raw_content.strip()
 
-        # Extract JSON
-        if text.startswith("```"):
-            lines = text.split("\n")
-            start = 1
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-            if text.startswith("json"):
-                text = text[4:].strip()
+            # Extract JSON
+            if text.startswith("```"):
+                lines = text.split("\n")
+                start = 1
+                end = len(lines)
+                for i in range(len(lines) - 1, 0, -1):
+                    if lines[i].strip() == "```":
+                        end = i
+                        break
+                text = "\n".join(lines[start:end])
+                if text.startswith("json"):
+                    text = text[4:].strip()
 
-        result = json.loads(text)
+            result = json.loads(text)
 
-        # Generate diffs
-        for fix in result.get("fixes", []):
-            filepath = fix.get("file", "")
-            corrected = fix.get("corrected_code", "")
-            original = source_files.get(filepath, "")
+            # Generate diffs
+            for fix in result.get("fixes", []):
+                filepath = fix.get("file", "")
+                corrected = fix.get("corrected_code", "")
+                original = source_files.get(filepath, "")
 
-            if original and corrected:
-                diff = difflib.unified_diff(
-                    original.splitlines(keepends=True),
-                    corrected.splitlines(keepends=True),
-                    fromfile=f"a/{filepath}",
-                    tofile=f"b/{filepath}",
-                    lineterm="",
-                )
-                fix["diff"] = "\n".join(diff)
-                fix["original_lines"] = len(original.splitlines())
-                fix["corrected_lines"] = len(corrected.splitlines())
+                if original and corrected:
+                    diff = difflib.unified_diff(
+                        original.splitlines(keepends=True),
+                        corrected.splitlines(keepends=True),
+                        fromfile=f"a/{filepath}",
+                        tofile=f"b/{filepath}",
+                        lineterm="",
+                    )
+                    fix["diff"] = "\n".join(diff)
+                    fix["original_lines"] = len(original.splitlines())
+                    fix["corrected_lines"] = len(corrected.splitlines())
+                else:
+                    fix["diff"] = ""
+
+            log.info("Fix generation succeeded with model: %s", model)
+            return result
+
+        except json.JSONDecodeError as e:
+            log.warning("Fix model %s returned invalid JSON: %s", model, e)
+            last_error = f"Failed to parse response from {model}: {e}"
+            continue
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate" in error_str.lower():
+                log.warning("Fix model %s rate-limited, trying next...", model)
+                last_error = f"Rate limited on {model}"
+                time.sleep(1)
+                continue
             else:
-                fix["diff"] = ""
+                log.error("Fix model %s failed: %s", model, e)
+                last_error = str(e)
+                continue
 
-        return result
-
-    except json.JSONDecodeError as e:
-        log.error("Fix generator returned invalid JSON: %s", e)
-        return {"error": f"Failed to parse fix response: {e}"}
-    except Exception as e:
-        log.error("Fix generation failed: %s", e)
-        return {"error": str(e)}
+    return {"error": last_error or "All models failed"}
 
 
 def generate_preview_fix(source_files: dict, llm_review: dict) -> dict:
@@ -198,8 +225,8 @@ def generate_preview_fix(source_files: dict, llm_review: dict) -> dict:
     if not api_key:
         return None
 
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    model = os.getenv("LLM_MODEL", "qwen/qwen3-coder:free")
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key, timeout=60)
+    model = os.getenv("LLM_MODEL", FREE_MODELS[0])
 
     try:
         response = client.chat.completions.create(

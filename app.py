@@ -26,6 +26,10 @@ import json
 # Max LOC for fix pack generation
 FIX_PACK_MAX_LOC = 50000
 
+# Gumroad purchase URLs
+GUMROAD_REPORT_URL = os.getenv("GUMROAD_REPORT_URL", "https://trevorgd6.gumroad.com/l/qvbyo")
+GUMROAD_FIXPACK_URL = os.getenv("GUMROAD_FIXPACK_URL", "https://trevorgd6.gumroad.com/l/atwzm")
+
 app = FastAPI(title="Vibe Audit")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
@@ -122,6 +126,8 @@ async def run_audit(request: Request, repo_url: str = Form(...), license_key: st
                 "issue_count": _issue_count(audit_result.llm_review),
                 "fix_eligible": audit_result.total_loc <= FIX_PACK_MAX_LOC,
                 "total_loc": audit_result.total_loc,
+                "gumroad_report_url": GUMROAD_REPORT_URL,
+                "gumroad_fixpack_url": GUMROAD_FIXPACK_URL,
             },
         )
 
@@ -149,6 +155,8 @@ async def view_report(request: Request, audit_id: str):
             "issue_count": _issue_count(llm),
             "fix_eligible": report.get("total_loc", 0) <= FIX_PACK_MAX_LOC,
             "total_loc": report.get("total_loc", 0),
+            "gumroad_report_url": GUMROAD_REPORT_URL,
+            "gumroad_fixpack_url": GUMROAD_FIXPACK_URL,
         },
     )
 
@@ -175,6 +183,8 @@ async def unlock_report(request: Request, audit_id: str, license_key: str = Form
                 "issue_count": _issue_count(llm),
                 "fix_eligible": report.get("total_loc", 0) <= FIX_PACK_MAX_LOC,
                 "total_loc": report.get("total_loc", 0),
+                "gumroad_report_url": GUMROAD_REPORT_URL,
+                "gumroad_fixpack_url": GUMROAD_FIXPACK_URL,
             },
         )
 
@@ -197,6 +207,8 @@ async def unlock_report(request: Request, audit_id: str, license_key: str = Form
             "issue_count": _issue_count(llm),
             "fix_eligible": report.get("total_loc", 0) <= FIX_PACK_MAX_LOC,
             "total_loc": report.get("total_loc", 0),
+            "gumroad_report_url": GUMROAD_REPORT_URL,
+            "gumroad_fixpack_url": GUMROAD_FIXPACK_URL,
         },
     )
 
@@ -340,5 +352,5 @@ if __name__ == "__main__":
         "app:app",
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8888")),
-        reload=True,
+        reload=os.getenv("DEV_MODE", "").lower() == "true",
     )

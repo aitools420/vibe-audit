@@ -80,6 +80,7 @@ def get_llm_review(audit_result) -> dict:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
+        timeout=120,
     )
 
     primary_model = os.getenv("LLM_MODEL", FREE_MODELS[0])

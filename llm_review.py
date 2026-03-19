@@ -8,13 +8,20 @@ log = logging.getLogger(__name__)
 
 # Free models to try, in order of preference
 FREE_MODELS = [
-    "arcee-ai/trinity-large-preview:free",
+    "minimax/minimax-m2.5:free",
     "qwen/qwen3-coder:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemma-3-27b-it:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "stepfun/step-3.5-flash:free",
+    "z-ai/glm-4.5-air:free",
 ]
+
+# Reasoning models need higher max_tokens because chain-of-thought eats into the budget
+REASONING_MODELS = frozenset({
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "stepfun/step-3.5-flash:free",
+    "minimax/minimax-m2.5:free",
+    "z-ai/glm-4.5-air:free",
+})
 
 REVIEW_PROMPT = """You are a senior software engineer conducting a professional code audit for a non-technical founder who built their project using AI coding tools ("vibe coding"). Be honest, specific, and constructive.
 
@@ -105,14 +112,21 @@ def get_llm_review(audit_result) -> dict:
     for model in models_to_try:
         try:
             log.info("Trying LLM model: %s", model)
+            # Reasoning models spend tokens on chain-of-thought before producing content
+            tokens = 16000 if model in REASONING_MODELS else 4000
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=4000,
+                max_tokens=tokens,
             )
 
-            text = response.choices[0].message.content.strip()
+            raw_content = response.choices[0].message.content
+            if not raw_content:
+                log.warning("Model %s returned empty content, trying next...", model)
+                last_error = f"Empty response from {model}"
+                continue
+            text = raw_content.strip()
 
             # Extract JSON from possible markdown fence
             if text.startswith("```"):

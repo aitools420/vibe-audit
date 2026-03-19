@@ -49,7 +49,7 @@ def generate_fixes(source_files: dict, llm_review: dict, audit_data: dict) -> di
         return {"error": "No API key configured"}
 
     client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    model = os.getenv("LLM_MODEL", "arcee-ai/trinity-large-preview:free")
+    model = os.getenv("LLM_MODEL", "qwen/qwen3-coder:free")
 
     # Build issues summary from the LLM review
     issues = []
@@ -199,7 +199,7 @@ def generate_preview_fix(source_files: dict, llm_review: dict) -> dict:
         return None
 
     client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    model = os.getenv("LLM_MODEL", "arcee-ai/trinity-large-preview:free")
+    model = os.getenv("LLM_MODEL", "qwen/qwen3-coder:free")
 
     try:
         response = client.chat.completions.create(

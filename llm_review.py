@@ -1,9 +1,20 @@
 import os
 import json
 import logging
+import time
 from openai import OpenAI
 
 log = logging.getLogger(__name__)
+
+# Free models to try, in order of preference
+FREE_MODELS = [
+    "arcee-ai/trinity-large-preview:free",
+    "qwen/qwen3-coder:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-3-27b-it:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+]
 
 REVIEW_PROMPT = """You are a senior software engineer conducting a professional code audit for a non-technical founder who built their project using AI coding tools ("vibe coding"). Be honest, specific, and constructive.
 
@@ -64,7 +75,8 @@ def get_llm_review(audit_result) -> dict:
         api_key=api_key,
     )
 
-    model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4.5")
+    primary_model = os.getenv("LLM_MODEL", FREE_MODELS[0])
+    models_to_try = [primary_model] + [m for m in FREE_MODELS if m != primary_model]
 
     # Build file contents section
     file_sections = []
@@ -89,42 +101,56 @@ def get_llm_review(audit_result) -> dict:
         file_contents=file_contents,
     )
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=4000,
-        )
+    last_error = None
+    for model in models_to_try:
+        try:
+            log.info("Trying LLM model: %s", model)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=4000,
+            )
 
-        text = response.choices[0].message.content.strip()
+            text = response.choices[0].message.content.strip()
 
-        # Extract JSON from possible markdown fence
-        if text.startswith("```"):
-            lines = text.split("\n")
-            start = 1 if lines[0].startswith("```") else 0
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            text = "\n".join(lines[start:end])
-            if text.startswith("json"):
-                text = text[4:].strip()
+            # Extract JSON from possible markdown fence
+            if text.startswith("```"):
+                lines = text.split("\n")
+                start = 1 if lines[0].startswith("```") else 0
+                end = len(lines)
+                for i in range(len(lines) - 1, 0, -1):
+                    if lines[i].strip() == "```":
+                        end = i
+                        break
+                text = "\n".join(lines[start:end])
+                if text.startswith("json"):
+                    text = text[4:].strip()
 
-        return json.loads(text)
+            result = json.loads(text)
+            log.info("LLM review succeeded with model: %s", model)
+            return result
 
-    except json.JSONDecodeError as e:
-        log.error("LLM returned invalid JSON: %s", e)
-        return {
-            "error": f"Failed to parse LLM response: {e}",
-            "overall_assessment": "The AI review ran but returned an unparseable response. The static analysis above is still valid.",
-            "architecture_score": 10,
-        }
-    except Exception as e:
-        log.error("LLM review failed: %s", e)
-        return {
-            "error": str(e),
-            "overall_assessment": "LLM review unavailable due to an error. The static analysis above is still valid.",
-            "architecture_score": 10,
-        }
+        except json.JSONDecodeError as e:
+            log.warning("Model %s returned invalid JSON: %s", model, e)
+            last_error = f"Failed to parse response from {model}: {e}"
+            continue
+
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "rate" in error_str.lower():
+                log.warning("Model %s rate-limited, trying next...", model)
+                last_error = f"Rate limited on {model}"
+                time.sleep(1)
+                continue
+            else:
+                log.error("Model %s failed: %s", model, e)
+                last_error = str(e)
+                continue
+
+    # All models failed
+    return {
+        "error": last_error or "All models failed",
+        "overall_assessment": "The AI review could not be completed — all available models were rate-limited or unavailable. The static analysis above is still valid.",
+        "architecture_score": 10,
+    }

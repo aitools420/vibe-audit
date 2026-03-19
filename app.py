@@ -51,6 +51,7 @@ async def home(request: Request):
 async def run_audit(request: Request, repo_url: str = Form(...), license_key: str = Form("")):
     # Determine tier: no key = free, valid key = report
     tier = "free"
+    valid_key = ""
     if license_key.strip():
         auth = await verify_license(license_key)
         if not auth["success"]:
@@ -59,6 +60,7 @@ async def run_audit(request: Request, repo_url: str = Form(...), license_key: st
                 {"request": request, "error": auth.get("error", "Invalid license key"), "repo_url": repo_url},
             )
         tier = "report"
+        valid_key = license_key.strip()
 
     # Normalize repo URL
     repo_url = repo_url.strip()
@@ -116,6 +118,7 @@ async def run_audit(request: Request, repo_url: str = Form(...), license_key: st
                 "llm": audit_result.llm_review or {},
                 "audit_id": audit_id,
                 "tier": tier,
+                "license_key": valid_key,
                 "issue_count": _issue_count(audit_result.llm_review),
                 "fix_eligible": audit_result.total_loc <= FIX_PACK_MAX_LOC,
                 "total_loc": audit_result.total_loc,
@@ -190,6 +193,7 @@ async def unlock_report(request: Request, audit_id: str, license_key: str = Form
             "llm": llm,
             "audit_id": audit_id,
             "tier": "report",
+            "license_key": license_key.strip(),
             "issue_count": _issue_count(llm),
             "fix_eligible": report.get("total_loc", 0) <= FIX_PACK_MAX_LOC,
             "total_loc": report.get("total_loc", 0),

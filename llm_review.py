@@ -8,7 +8,6 @@ log = logging.getLogger(__name__)
 
 # Free models to try, in order of preference
 FREE_MODELS = [
-    "minimax/minimax-m2.5:free",
     "qwen/qwen3-coder:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
     "stepfun/step-3.5-flash:free",
@@ -19,7 +18,6 @@ FREE_MODELS = [
 REASONING_MODELS = frozenset({
     "nvidia/nemotron-3-super-120b-a12b:free",
     "stepfun/step-3.5-flash:free",
-    "minimax/minimax-m2.5:free",
     "z-ai/glm-4.5-air:free",
 })
 
@@ -80,7 +78,7 @@ def get_llm_review(audit_result) -> dict:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        timeout=120,
+        timeout=90,
     )
 
     primary_model = os.getenv("LLM_MODEL", FREE_MODELS[0])
@@ -143,6 +141,24 @@ def get_llm_review(audit_result) -> dict:
                     text = text[4:].strip()
 
             result = json.loads(text)
+
+            # Validate required keys exist before trusting LLM output
+            required_keys = [
+                "overall_assessment", "architecture_score",
+                "priority_fixes", "security_concerns", "code_smells",
+            ]
+            missing = [k for k in required_keys if k not in result]
+            if missing:
+                log.warning("Model %s response missing keys %s, trying next...", model, missing)
+                last_error = f"Response from {model} missing required keys: {missing}"
+                continue
+
+            # Ensure list-valued keys are actually lists
+            for list_key in ("priority_fixes", "security_concerns", "code_smells",
+                             "architecture_concerns", "positive_notes"):
+                if list_key in result and not isinstance(result[list_key], list):
+                    result[list_key] = []
+
             log.info("LLM review succeeded with model: %s", model)
             return result
 

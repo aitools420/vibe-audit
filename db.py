@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import json
-import uuid
+import secrets
 from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "vibe_audit.db")
@@ -35,7 +35,7 @@ def init_db():
 
 
 def save_audit(license_key, email, repo_url, audit_result):
-    audit_id = uuid.uuid4().hex[:12]
+    audit_id = secrets.token_urlsafe(32)
     with _conn() as conn:
         conn.execute(
             "INSERT INTO audits (id, license_key, email, repo_url, repo_name, score, grade, report_json, source_files, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",

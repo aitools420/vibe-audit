@@ -5,10 +5,16 @@ import tempfile
 import asyncio
 import logging
 import zipfile
+import uuid
+import secrets
+import time as _time
+from collections import defaultdict
+from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from jinja2 import Environment, FileSystemLoader
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,8 +37,21 @@ GUMROAD_REPORT_URL = os.getenv("GUMROAD_REPORT_URL", "https://trevorgd6.gumroad.
 GUMROAD_FIXPACK_URL = os.getenv("GUMROAD_FIXPACK_URL", "https://trevorgd6.gumroad.com/l/atwzm")
 
 app = FastAPI(title="Vibe Audit")
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+_jinja_env = Environment(
+    loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
+    autoescape=True,
+)
+templates = Jinja2Templates(env=_jinja_env)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
+# In-memory job store for async audits
+# {job_id: {"status": "processing"|"done"|"error", "audit_id": ..., "error": ...}}
+_jobs: dict[str, dict] = {}
+
+# Rate limiter: per-IP, 5 requests per 60 seconds on /audit
+_RATE_LIMIT = 5
+_RATE_WINDOW = 60  # seconds
+_rate_log: dict[str, list[float]] = defaultdict(list)
 
 
 def _issue_count(llm_review: dict) -> int:
@@ -46,51 +65,13 @@ def _issue_count(llm_review: dict) -> int:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.post("/audit", response_class=HTMLResponse)
-async def run_audit(request: Request, repo_url: str = Form(...), license_key: str = Form("")):
-    # Determine tier: no key = free, valid key = report
-    tier = "free"
-    valid_key = ""
-    if license_key.strip():
-        auth = await verify_license(license_key)
-        if not auth["success"]:
-            return templates.TemplateResponse(
-                "index.html",
-                {"request": request, "error": auth.get("error", "Invalid license key"), "repo_url": repo_url},
-            )
-        tier = "report"
-        valid_key = license_key.strip()
-
-    # Normalize repo URL
-    repo_url = repo_url.strip()
-    if not any(host in repo_url for host in ["github.com", "gitlab.com", "bitbucket.org"]):
-        if "/" in repo_url and len(repo_url.split("/")) == 2:
-            repo_url = f"https://github.com/{repo_url}"
-        else:
-            return templates.TemplateResponse(
-                "index.html",
-                {"request": request, "error": "Enter a valid GitHub URL or owner/repo", "repo_url": repo_url},
-            )
-
+async def _run_audit_job(job_id: str, repo_url: str, license_key: str):
+    """Run the audit in the background and store the result."""
     tmp_dir = tempfile.mkdtemp(prefix="vibe_audit_")
     try:
-        # Clone
-        try:
-            repo_path = await asyncio.to_thread(clone_repo, repo_url, tmp_dir)
-        except ValueError as e:
-            return templates.TemplateResponse(
-                "index.html", {"request": request, "error": str(e), "repo_url": repo_url}
-            )
-
-        # Analyze
+        repo_path = await asyncio.to_thread(clone_repo, repo_url, tmp_dir)
         audit_result = await asyncio.to_thread(analyze_repo, repo_path, repo_url)
 
-        # LLM review
         try:
             llm_result = await asyncio.to_thread(get_llm_review, audit_result)
             audit_result.llm_review = llm_result
@@ -111,28 +92,78 @@ async def run_audit(request: Request, repo_url: str = Form(...), license_key: st
             logging.error("LLM review failed: %s", e)
             audit_result.llm_review = {"error": str(e), "overall_assessment": "LLM review unavailable."}
 
-        # Save
         audit_id = save_audit(license_key, "", repo_url, audit_result)
+        _jobs[job_id] = {"status": "done", "audit_id": audit_id}
 
-        return templates.TemplateResponse(
-            "report.html",
-            {
-                "request": request,
-                "audit": audit_result.to_dict(),
-                "llm": audit_result.llm_review or {},
-                "audit_id": audit_id,
-                "tier": tier,
-                "license_key": valid_key,
-                "issue_count": _issue_count(audit_result.llm_review),
-                "fix_eligible": audit_result.total_loc <= FIX_PACK_MAX_LOC,
-                "total_loc": audit_result.total_loc,
-                "gumroad_report_url": GUMROAD_REPORT_URL,
-                "gumroad_fixpack_url": GUMROAD_FIXPACK_URL,
-            },
-        )
-
+    except Exception as e:
+        logging.error("Audit job %s failed: %s", job_id, e)
+        _jobs[job_id] = {"status": "error", "error": str(e)}
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.post("/audit", response_class=HTMLResponse)
+async def run_audit(request: Request, repo_url: str = Form(...), license_key: str = Form("")):
+    # Rate limit: 5 requests per minute per IP
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    timestamps = _rate_log[client_ip]
+    _rate_log[client_ip] = [t for t in timestamps if now - t < _RATE_WINDOW]
+    if len(_rate_log[client_ip]) >= _RATE_LIMIT:
+        return templates.TemplateResponse(
+            "index.html",
+            {"request": request, "error": "Too many requests. Please wait a minute before trying again.", "repo_url": repo_url},
+        )
+    _rate_log[client_ip].append(now)
+
+    # Determine tier: no key = free, valid key = report
+    tier = "free"
+    if license_key.strip():
+        auth = await verify_license(license_key)
+        if not auth["success"]:
+            return templates.TemplateResponse(
+                "index.html",
+                {"request": request, "error": auth.get("error", "Invalid license key"), "repo_url": repo_url},
+            )
+        tier = "report"
+
+    # Normalize and validate repo URL
+    repo_url = repo_url.strip()
+    allowed_hosts = ["github.com", "gitlab.com", "bitbucket.org"]
+    parsed_url = urlparse(repo_url)
+    if parsed_url.netloc not in allowed_hosts:
+        # Allow bare owner/repo shorthand (assumes GitHub)
+        if "/" in repo_url and len(repo_url.split("/")) == 2 and not parsed_url.scheme:
+            repo_url = f"https://github.com/{repo_url}"
+        else:
+            return templates.TemplateResponse(
+                "index.html",
+                {"request": request, "error": "Enter a valid GitHub, GitLab, or Bitbucket URL (or owner/repo)", "repo_url": repo_url},
+            )
+
+    # Start background job and return processing page immediately
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "processing"}
+    asyncio.create_task(_run_audit_job(job_id, repo_url, license_key))
+
+    return templates.TemplateResponse(
+        "processing.html",
+        {"request": request, "job_id": job_id, "repo_url": repo_url},
+    )
+
+
+@app.get("/status/{job_id}")
+async def job_status(job_id: str):
+    """Poll endpoint for async audit jobs."""
+    job = _jobs.get(job_id)
+    if not job:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    return JSONResponse(job)
 
 
 @app.get("/report/{audit_id}", response_class=HTMLResponse)
